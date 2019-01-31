@@ -1,0 +1,394 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Example AWS serverless crud API.
+Resources:
+  playerTransactionPutRole:
+    Type: 'AWS::IAM::Role'
+    Description: Grant Lambda write access to DynamoDB
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+      Policies:
+        - PolicyName: Dynamo_Lambda_Put_Access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action: 'dynamodb:PutItem'
+                Resource: 'arn:aws:dynamodb:*:*:table/*'
+                Effect: Allow
+              - Action: 'dynamodb:List*'
+                Resource: 'arn:aws:dynamodb:*:*:table/*'
+                Effect: Allow
+      MaxSessionDuration: 3600
+      RoleName: playerTransactionPutRole
+  playerTransactionGetRole:
+    Type: 'AWS::IAM::Role'
+    Description: Grant Lambda read access to DynamoDB
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+      Policies:
+        - PolicyName: Dynamo_Lambda_Query_Access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action: 'dynamodb:Query'
+                Resource: 'arn:aws:dynamodb:*:*:table/*'
+                Effect: Allow
+              - Action: 'dynamodb:List*'
+                Resource: 'arn:aws:dynamodb:*:*:table/*'
+                Effect: Allow
+      MaxSessionDuration: 3600
+      RoleName: playerTransactionGetRole
+  playerTransactionDeleteRole:
+    Type: 'AWS::IAM::Role'
+    Description: Grant Lambda delete access to DynamoDB
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+      Policies:
+        - PolicyName: Dynamo_Lambda_Query_Access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action: 'dynamodb:Delete*'
+                Resource: 'arn:aws:dynamodb:*:*:table/*'
+                Effect: Allow
+              - Action: 'dynamodb:List*'
+                Resource: 'arn:aws:dynamodb:*:*:table/*'
+                Effect: Allow
+      MaxSessionDuration: 3600
+      RoleName: playerTransactionDeleteRole
+  LambdaLogPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: lambdaCloudWatchLogWriteAccess
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'logs:CreateLogGroup'
+              - 'logs:CreateLogStream'
+              - 'logs:PutLogEvents'
+            Resource: 'arn:aws:logs:*:*:*'
+            Effect: Allow
+      Roles:
+        - !Ref playerTransactionPutRole
+        - !Ref playerTransactionGetRole
+  playerTransactionTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: playerAccountId
+          AttributeType: S
+        - AttributeName: transactionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: playerAccountId
+          KeyType: HASH
+        - AttributeName: transactionId
+          KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      TableName: !Sub ${AWS::StackName}_playerInGameTransactions
+  getPlayerTransaction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      MemorySize: 128
+      Handler: GetDynamoItem.lambda_handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/playerTransactionGetRole
+      Timeout: 10
+      Code: ./linux-lambda.zip
+      Runtime: python3.7
+      Environment:
+        Variables:
+          DB_TABLE: !Ref 'playerTransactionTable'
+  putPlayerTransaction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      MemorySize: 128
+      Handler: PutDynamoItem.lambda_handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/playerTransactionPutRole
+      Timeout: 10
+      Code: ./linux-lambda.zip
+      Runtime: python3.7
+      Environment:
+        Variables:
+          DB_TABLE: !Ref 'playerTransactionTable'
+  deletePlayerTransaction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      MemorySize: 128
+      Handler: DeleteDynamoItem.lambda_handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/playerTransactionDeleteRole
+      Timeout: 10
+      Code: ./linux-lambda.zip
+      Runtime: python3.7
+      Environment:
+        Variables:
+          DB_TABLE: !Ref 'playerTransactionTable'
+  invokePutPlayerTransactionPermission:
+    Type: 'AWS::Lambda::Permission'
+    DependsOn:
+      - putPlayerTransaction
+      - playerTranApi
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      FunctionName: !Ref putPlayerTransaction
+      SourceArn: !Sub
+        - >-
+          arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${__ApiId__}/*/PUT/*
+        - __ApiId__: !Ref playerTranApi
+  invokeGetPlayerTransaction:
+    Type: 'AWS::Lambda::Permission'
+    DependsOn:
+      - getPlayerTransaction
+      - playerTranApi
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      FunctionName: !Ref getPlayerTransaction
+      SourceArn: !Sub
+        - >-
+          arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${__ApiId__}/*/GET/*/*
+        - __ApiId__: !Ref playerTranApi
+  invokeDeletePlayerTransaction:
+    Type: 'AWS::Lambda::Permission'
+    DependsOn:
+      - deletePlayerTransaction
+      - playerTranApi
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      FunctionName: !Ref deletePlayerTransaction
+      SourceArn: !Sub
+        - >-
+          arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${__ApiId__}/*/DELETE/*/*
+        - __ApiId__: !Ref playerTranApi
+  playerTranApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Body:
+        swagger: '2.0'
+        info:
+          version: '2018-10-22T18:33:26Z'
+          title: !Sub ${AWS::StackName}_playerTranApi
+        basePath: /dev
+        schemes:
+          - https
+        paths:
+          '/{playerAccountId}/{transactionId}':
+            get:
+              consumes:
+                - application/json
+              produces:
+                - application/json
+              parameters:
+                - name: playerAccountId
+                  in: path
+                  required: true
+                  type: string
+                - name: transactionId
+                  in: path
+                  required: true
+                  type: string
+              responses:
+                '200':
+                  description: 200 response
+                  schema:
+                    $ref: '#/definitions/TransactionItem'
+              security:
+                - api_key: []
+              x-amazon-apigateway-integration:
+                uri: !Sub
+                  - >-
+                    arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${__FunctionArn__}/invocations
+                  - __FunctionArn__: !GetAtt
+                      - getPlayerTransaction
+                      - Arn
+                responses:
+                  default:
+                    statusCode: '200'
+                passthroughBehavior: never
+                httpMethod: POST
+                contentHandling: CONVERT_TO_TEXT
+                type: aws_proxy
+            delete:
+              consumes:
+                - application/json
+              produces:
+                - application/json
+              parameters:
+                - name: playerAccountId
+                  in: path
+                  required: true
+                  type: string
+                - name: transactionId
+                  in: path
+                  required: true
+                  type: string
+              responses:
+                '200':
+                  description: 200 response
+                  schema:
+                    $ref: '#/definitions/Empty'
+              security:
+                - api_key: []
+              x-amazon-apigateway-integration:
+                uri: !Sub
+                  - >-
+                    arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${__FunctionArn__}/invocations
+                  - __FunctionArn__: !GetAtt
+                      - deletePlayerTransaction
+                      - Arn
+                responses:
+                  default:
+                    statusCode: '200'
+                passthroughBehavior: never
+                httpMethod: POST
+                contentHandling: CONVERT_TO_TEXT
+                type: aws_proxy
+          '/createPlayerTransaction':
+            put:
+              description: Stores player transaction.
+              consumes:
+                - application/json
+              produces:
+                - application/json
+              parameters:
+                - in: body
+                  name: TransactionItem
+                  description: Information about the transaction.
+                  required: true
+                  schema:
+                    $ref: '#/definitions/TransactionItem'
+              responses:
+                '201':
+                  description: Transaction accepted and stored.
+                  content:
+                    application/json:
+                      schema:
+                        $ref: '#/definitions/Empty'
+              security:
+                - api_key: []
+              x-amazon-apigateway-request-validator: Validate body
+              x-amazon-apigateway-integration:
+                uri: !Sub
+                  - >-
+                    arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${__FunctionArn__}/invocations
+                  - __FunctionArn__: !GetAtt
+                      - putPlayerTransaction
+                      - Arn
+                responses:
+                  default:
+                    statusCode: '201'
+                passthroughBehavior: never
+                httpMethod: POST
+                contentHandling: CONVERT_TO_TEXT
+                type: aws_proxy
+        securityDefinitions:
+          api_key:
+            type: apiKey
+            name: x-api-key
+            in: header
+        definitions:
+          Empty:
+            type: object
+            title: Empty Schema
+          TransactionItem:
+            type: object
+            required:
+              - playerAccountId
+              - transactionId
+            properties:
+              playerAccountId:
+                type: string
+                description: Player Account ID.
+                maxLength: 24
+              transactionId:
+                type: string
+                description: Transaction ID.
+                maxLength: 12
+              usdAmount:
+                type: string
+                description: Transaction value in USD
+                maxLength: 5
+              gameItem:
+                type: string
+                description: Purchased in game item
+                maxLength: 24
+            title: TransactionItem
+            description: "Item containing player and transaction ids"
+        x-amazon-apigateway-request-validators:
+          Validate body:
+            validateRequestParameters: false
+            validateRequestBody: true
+      EndpointConfiguration:
+        Types:
+          - EDGE
+      Parameters:
+        endpointConfigurationTypes: EDGE
+  playerTranApiDeployment:
+    Type: 'AWS::ApiGateway::Deployment'
+    Properties:
+      RestApiId: !Ref playerTranApi
+  devStage:
+    Type: 'AWS::ApiGateway::Stage'
+    Properties:
+      MethodSettings:
+        - ResourcePath: /*
+          DataTraceEnabled: true
+          HttpMethod: '*'
+          MetricsEnabled: true
+          ThrottlingRateLimit: 1000
+          ThrottlingBurstLimit: 1000
+      RestApiId: !Ref playerTranApi
+      DeploymentId: !Ref playerTranApiDeployment
+      StageName: dev
+  usagePlan:
+    Type: 'AWS::ApiGateway::UsagePlan'
+    Properties:
+      ApiStages:
+        - ApiId: !Ref playerTranApi
+          Stage: !Ref devStage
+      Description: Developer usage plan
+      Quota:
+        Limit: 10000
+        Period: DAY
+      Throttle:
+        BurstLimit: 1000
+        RateLimit: 1000
+      UsagePlanName: Dev_Plan
+  usagePlanKey:
+    Type: 'AWS::ApiGateway::UsagePlanKey'
+    Properties:
+      KeyId: !Ref devApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref usagePlan
+  devApiKey:
+    Type: 'AWS::ApiGateway::ApiKey'
+    DependsOn:
+      - playerTranApiDeployment
+      - devStage
+    Properties:
+      Description: Dev API key
+      Enabled: 'true'
+      StageKeys:
+        - RestApiId: !Ref playerTranApi
+          StageName: dev
